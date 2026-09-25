@@ -42,6 +42,8 @@ node tests/calculator.cjs
 
 ## 網站
 
-現有私人網站：https://marukyou-split-jt.jacktamlokhang.chatgpt.site
+[開啟食飯分帳計算器](https://breezyjack459.github.io/marukyou-bill-splitter/)
 
-`dist/` 可部署到支援靜態檔案嘅網站服務。此 repository 唔包含原 Sites 部署設定或登入憑證。
+網站由 GitHub Pages 發佈，毋須登入，可以直接分享畀其他人使用。
+
+GitHub Pages 使用 `gh-pages` 分支根目錄；應用程式原始檔案放喺 `main` 分支嘅 `dist/`。
