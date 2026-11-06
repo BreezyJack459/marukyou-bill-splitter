@@ -26,7 +26,27 @@ function splitSide(item,count,names){
  const base=Math.floor(item.price/count),extra=item.price%count;
  return names.map((person,i)=>({...item,person,price:base+(i<extra?1:0),name:item.name+'（'+count+' 人分・第 '+(i+1)+' 份）',isRamen:false}));
 }
-if(typeof module!=='undefined')module.exports={allocate,apply78Rule,splitSide};
+// Versioned snapshots travel in the URL fragment; no server or local storage required.
+const SHARE_LIMIT=60000;
+function validateBill(data){
+ if(!data||data.v!==1||!Array.isArray(data.orders)||!data.orders.length||data.orders.length>200||typeof data.exclude78!=='boolean'||typeof data.paid!=='string'||(data.paid!==''&&(!/^\d+(\.\d{1,2})?$/.test(data.paid)||Number(data.paid)>1000000)))throw Error('分享連結無效或版本不支援。');
+ const orders=data.orders.map(x=>{
+  if(!x||typeof x.name!=='string'||!x.name.length||x.name.length>1000||typeof x.person!=='string'||x.person.length>40||!Number.isSafeInteger(x.price)||x.price<0||x.price>100000000||['free','fixed','isRamen'].some(k=>typeof x[k]!=='boolean')||(x.free&&(x.price!==0||x.fixed)))throw Error('分享賬單資料無效。');
+  return {name:x.name,person:x.person,price:x.price,free:x.free,fixed:x.fixed,isRamen:x.isRamen};
+ });
+ return {v:1,orders,paid:data.paid,exclude78:data.exclude78};
+}
+function encodeBill(data){
+ const bytes=new TextEncoder().encode(JSON.stringify(validateBill(data)));
+ const encoded=btoa(Array.from(bytes,b=>String.fromCharCode(b)).join('')).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+ if(encoded.length>SHARE_LIMIT)throw Error('賬單太長，請減少項目再分享。');
+ return encoded;
+}
+function decodeBill(encoded){
+ if(!encoded||encoded.length>SHARE_LIMIT||!/^[A-Za-z0-9_-]+$/.test(encoded))throw Error('分享連結無效或太長。');
+ try{return validateBill(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(atob(encoded.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0)))));}catch{throw Error('分享連結無效或版本不支援。');}
+}
+if(typeof module!=='undefined')module.exports={allocate,apply78Rule,splitSide,encodeBill,decodeBill};
 if(typeof document!=='undefined'){
 const $=id=>document.getElementById(id),money=n=>'$'+(n/100).toFixed(2),escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let category='拉麵',selected=0,orders=[];
@@ -46,6 +66,21 @@ $('exclude78').onchange=render;
 const billedOrders=()=>apply78Rule(orders,$('exclude78').checked);
 function render(){ $('count').textContent=orders.length+' 項';$('orders').innerHTML=orders.length?billedOrders().map((x,i)=>`<div class="row"><div class="info"><strong>${escape(x.person||'餐點 '+(i+1))}</strong><span>${escape(x.name)}</span><div class="checks"><label><input type="checkbox" data-fixed="${i}" ${x.fixed?'checked':''} ${x.free||x.autoFixed?'disabled':''}>照原價${x.autoFixed?'（$78 規則）':''}</label></div></div><span class="rowPrice">${money(x.price)}</span><button type="button" data-remove="${i}" aria-label="移除第 ${i+1} 項">移除</button></div>`).join(''):'<div class="empty">喺餐牌揀餐點，加入今餐清單。</div>';renderResults();}
 function renderResults(){const calculated=billedOrders();const sum=orders.reduce((s,x)=>s+x.price,0);let html=`<div class="totals"><span>餐點計價合計（免費項目 $0）</span><strong>${money(sum)}</strong></div>`;if(!$('paid').value){$('results').innerHTML=html;return;}try{const paid=cents($('paid').value),payments=allocate(calculated,paid);[false,true].forEach(f=>{const list=calculated.map((x,i)=>({...x,i})).filter(x=>x.fixed===f);if(!list.length)return;html+=`<div class="resultGroup"><h3>${f?'照原價':'按比例分攤'}</h3>`+list.map(x=>`<div class="resultLine"><span>${escape(x.person||'餐點 '+(x.i+1))} · ${escape(x.name)}</span><strong>${money(payments[x.i])}</strong></div>`).join('')+'</div>';});const shareBase=calculated.reduce((sum,x)=>sum+(x.fixed?0:x.price),0);const people=new Map();orders.forEach((x,i)=>{const key=x.person?'name:'+x.person:'item:'+i;const prev=people.get(key)||{name:x.person||'餐點 '+(i+1),amount:0,items:[],weight:0,fixedAmount:0};prev.amount+=payments[i];if(calculated[i].fixed)prev.fixedAmount+=x.price;else prev.weight+=x.price;prev.items.push(x.name);people.set(key,prev);});html+='<div class="resultGroup"><h3>每位應付</h3><p class="muted">分攤比例＝個人參與分攤餐點原價 ÷ 全部分攤餐點原價；照原價及免費項目唔佔比例。百分比四捨五入至兩位小數。</p>'+[...people.values()].map(x=>`<div class="totals"><div style="min-width:0;overflow-wrap:anywhere"><span>${escape(x.name)}</span><div class="muted">${x.weight>0&&shareBase>0?`分攤 ${(x.weight/shareBase*100).toFixed(2)}%${x.fixedAmount>0?` · 另加照原價 ${money(x.fixedAmount)}`:''}`:x.fixedAmount>0?'照原價 · 唔參與分攤':'免費 · 分攤 0.00%'}</div><div class="muted">${x.items.map(item=>`<div>${escape(item)}</div>`).join('')}</div></div><strong style="white-space:nowrap">${money(x.amount)}</strong></div>`).join('')+'</div>';html+=`<div class="totals total"><span>應收總數</span><span>${money(paid)}</span></div>`;if(paid>sum)html+='<p class="muted">實付高過原價，多出嘅金額已由參與分攤項目按比例分配。</p>';}catch(err){html+=`<p class="error" role="alert">${escape(err.message)}</p>`;}$('results').innerHTML=html;}
-renderMenu();render();
+function loadSharedBill(){
+ if(typeof location==='undefined'||!location.hash.startsWith('#bill='))return;
+ try{const data=decodeBill(location.hash.slice(6));orders=data.orders;$('paid').value=data.paid;$('exclude78').checked=data.exclude78;render();$('shareStatus').textContent='已開啟分享賬單（分享當刻的記錄）。';}
+ catch(err){$('shareStatus').textContent=err.message;}
+}
+$('shareBill').onclick=async()=>{
+ $('shareLinkBox').hidden=true;
+ try{
+  const url=new URL(location.href);url.hash='bill='+encodeBill({v:1,orders,paid:$('paid').value,exclude78:$('exclude78').checked});
+  $('shareLink').value=url.href;$('shareLinkBox').hidden=false;
+  try{await navigator.clipboard.writeText(url.href);$('shareStatus').textContent='已複製分享連結，可以貼畀朋友。';}
+  catch{$('shareStatus').textContent='請複製下面的完整連結分享。';$('shareLink').focus();$('shareLink').select();}
+ }catch(err){$('shareStatus').textContent=err.message;}
+};
+if(typeof window!=='undefined')window.addEventListener('hashchange',loadSharedBill);
+renderMenu();render();loadSharedBill();
 if(document.modelContext?.registerTool){try{Promise.resolve(document.modelContext.registerTool({name:'read_split_bill',description:'Read current ordered items and calculated payments in HKD cents.',inputSchema:{type:'object',properties:{},additionalProperties:false},annotations:{readOnlyHint:true,untrustedContentHint:true},execute(){return {items:billedOrders(),payments:allocate(billedOrders(),cents($('paid').value))};}})).catch(()=>{});}catch{}}
 }
