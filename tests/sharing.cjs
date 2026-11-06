@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict');
+const {encodeBill,decodeBill,allocate,apply78Rule}=require('../dist/app.js');
+const bill={v:1,orders:[{name:'拉麵 🍜 <script>',person:'阿明',price:7800,free:false,fixed:false,isRamen:true},{name:'免費茶',person:'阿欣',price:0,free:true,fixed:false,isRamen:false},{name:'餃子',person:'阿欣',price:3500,free:false,fixed:true,isRamen:false}],paid:'113.00',exclude78:true};
+const restored=decodeBill(encodeBill(bill));
+assert.deepEqual(restored,bill);
+assert.deepEqual(allocate(apply78Rule(restored.orders,restored.exclude78),11300),[7800,0,3500]);
+assert.equal(decodeBill(encodeBill({...bill,paid:''})).paid,'');
+for(const invalid of ['', '???','a'.repeat(60001),btoa('{"v":2}')])assert.throws(()=>decodeBill(invalid));
+for(const invalid of [{...bill,orders:[]},{...bill,orders:Array(201).fill(bill.orders[0])},{...bill,paid:'-1'},{...bill,orders:[{...bill.orders[0],price:1.5}]},{...bill,orders:[{...bill.orders[0],free:true}]}])assert.throws(()=>encodeBill(invalid));
+console.log('Sharing: Unicode snapshot round trip, payments, incomplete bill and invalid input PASS');
